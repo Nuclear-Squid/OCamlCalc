@@ -1,5 +1,10 @@
 open Base
 open Stdio
+open Poly
+
+type [@warning "-37"] calculator_style =
+    | Standard
+    | ReversePolish
 
 type stack = float list
 
@@ -10,6 +15,12 @@ type operator =
     | Mult
     | Pow
     | Div
+
+type operator_tree = {
+    op: operator;
+    l_br: operator_tree option;
+    r_br: operator_tree option;
+}
 
 let is_number str =
     let rec loop n_dots char_list =
@@ -32,6 +43,32 @@ let string_to_operator = function
     | x when is_number x -> Some (Val (Float.of_string x))
     | _   -> None
 
+let debug_op_to_str = function
+    | Val x -> Float.to_string x
+    | Add -> "+"
+    | Sub -> "-"
+    | Mult -> "*"
+    | Div -> "/"
+    | Pow -> "^"
+
+let debug_print_op_tree tree = 
+    let rec loop node depth =
+        printf "%s%s\n" (String.make (depth * 2) ' ') (debug_op_to_str node.op);
+        match node.l_br with
+        | None   -> ();
+        | Some n -> loop n (depth + 1);
+        match node.r_br with
+        | None   -> ();
+        | Some n -> loop n (depth + 1);
+    in
+    loop tree 0
+
+let operator_priority = function
+    | Val _ -> 0
+    | Add | Sub -> 1
+    | Mult | Div -> 2
+    | Pow -> 3
+
 let eval_operation (s: stack) (op: operator): stack =
     let helper (f: float -> float -> float) = function
         | val1 :: val2 :: tl -> f val2 val1 :: tl
@@ -45,17 +82,89 @@ let eval_operation (s: stack) (op: operator): stack =
     | Pow   -> apply_fun ( **. )
     | Div   -> apply_fun ( /. )
 
-let quick_eval (args: string list): unit =
-    let f str =
+(* Dear god this got way out of hand *)
+let get_operator_depth_list input_string : (int * operator_tree) list =
+    let rec get_str_depth_list depth (buff: string) (acc: (int * string) list) = function
+        | [] when depth > 0 -> failwith "Unclosed parenthesese"
+        | ')' :: _ when depth = 0 -> failwith "')' is missing a matching '('"
+        | []        -> acc @ [depth, buff]
+        | '(' :: tl -> get_str_depth_list (depth + 1) "" (acc @ [depth, buff]) tl
+        | ')' :: tl -> get_str_depth_list (depth - 1) "" (acc @ [depth, buff]) tl
+        | ' ' :: tl -> get_str_depth_list depth "" (acc @ [depth, buff]) tl
+        | sym :: tl -> get_str_depth_list depth (buff ^ Char.to_string sym) acc tl
+    and string_to_operator_exn str =
         match string_to_operator str with
         | Some op -> op
-        | None -> eprintf "Unkown operator `%s`\n" str; Caml.exit 1
+        | None    -> eprintf "Unkown operator `%s`\n" str; Caml.exit 1 
+    and explicit_multiplications acc = function
+        | [] -> acc
+        | (d1, Val v1) :: (d2, Val v2) :: tl when d1 <> d2 -> explicit_multiplications
+                (acc @ [(d1, Val v1); (min d1 d2, Mult); (d2, Val v2)]) tl
+        | hd :: tl -> explicit_multiplications (acc @ [hd]) tl
+    in String.to_list input_string
+        |> get_str_depth_list 0 "" []
+        |> List.filter ~f:(fun (_, str) -> str <> "")
+        |> List.map ~f:(fun (depth, str) -> (depth, string_to_operator_exn str))
+        |> explicit_multiplications []
+        |> List.map ~f:(fun (depth, op) -> (depth, {op = op; l_br = None; r_br = None}))
+
+let join_op_tree_nodes (input: (int * operator_tree) list) =
+    let highest_op_prio = 
+        List.map ~f:(fun (_, node) -> operator_priority node.op) input
+        |> List.fold ~f:max ~init:0
+    and highest_par_prio =
+        List.map ~f:(fun (d, _) -> d) input
+        |> List.fold ~f:max ~init:0
     in
-    List.map ~f args
-    |> List.fold ~f:eval_operation ~init:[]
-    |> function
-        | result :: [] -> printf "%.10g\n" result
-        | _ -> printf "Too many elements left in stack.\n"
+    let rec loop (cur_op_prio: int) (cur_par_prio: int)
+                 (untreated: (int * operator_tree) list) = function
+        | (_,v1) :: (od, op) :: (_,v2) :: [] as l -> begin
+            if operator_priority op.op = cur_op_prio && od = cur_par_prio then
+                let new_op = { op = op.op; l_br = Some v1; r_br = Some v2; } in
+                let next_input = untreated @ [od, new_op] in
+                match cur_op_prio, cur_par_prio with
+                | 1, 0 -> new_op
+                | 1, _ -> loop highest_op_prio (cur_par_prio - 1) [] next_input
+                | _, _ -> loop (cur_op_prio - 1) cur_par_prio [] next_input
+            else
+                match cur_op_prio, cur_par_prio with
+                | 1, 0 -> failwith "sssssrrrttt"
+                | 1, _ -> loop highest_op_prio (cur_par_prio - 1) [] (untreated @ l)
+                | _, _ -> loop (cur_op_prio - 1) cur_par_prio [] (untreated @ l)
+        end
+        | (d1,v1) :: (od, op) :: (d2,v2) :: tl -> begin
+            if operator_priority op.op = cur_op_prio && od = cur_par_prio then
+                let new_op = { op = op.op; l_br = Some v1; r_br = Some v2; }
+                in loop cur_op_prio cur_par_prio untreated ((od, new_op) :: tl)
+            else
+                let new_untreated = untreated @ [(d1, v1); (od, op)] in
+                loop cur_op_prio cur_par_prio new_untreated ((d2, v2) :: tl)
+        end
+        | [_, op] -> op
+        | _ -> failwith "syntax error in expression"
+    in
+    loop highest_op_prio highest_par_prio [] input
+
+let quick_eval (args: string list) (style: calculator_style): unit =
+    match style with
+    | ReversePolish -> begin 
+        let f str =
+            match string_to_operator str with
+            | Some op -> op
+            | None -> eprintf "Unkown operator `%s`\n" str; Caml.exit 1
+        in
+        List.map ~f args
+        |> List.fold ~f:eval_operation ~init:[]
+        |> function
+            | result :: [] -> printf "%.10g\n" result
+            | _ -> printf "Too many elements left in stack.\n"
+    end
+    | Standard -> begin
+        String.concat ~sep:" " args
+        |> get_operator_depth_list
+        |> join_op_tree_nodes
+        |> debug_print_op_tree
+    end
 
 let help prog_name =
     printf "-< %s >-\n\n" prog_name;
@@ -69,4 +178,4 @@ let () =
     match args with
     | [] -> failwith "interactive mode incomming"
     | "-h" :: _  | "--help" :: [] -> help prog_name
-    | _  -> quick_eval args
+    | _  -> quick_eval args Standard
