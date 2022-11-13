@@ -1,17 +1,27 @@
 open Base
 open Stdio
 
-type stack = int list
+type stack = float list
 
 type operator =
-    | Val of int
+    | Val of float
     | Add
     | Sub
     | Mult
     | Pow
     | Div
 
-let is_number str = String.for_all ~f:(Char.is_digit) str
+let is_number str =
+    let rec loop n_dots char_list =
+        match n_dots, char_list with
+        | (0, '.' :: tl) -> loop 1 tl
+        | (1, '.' :: _) -> false
+        | (_, d :: tl) when Char.is_digit d -> loop n_dots tl
+        | (_, []) -> true
+        | (_, _) -> false
+    in match String.to_list str with
+    | [] -> false
+    | l  -> loop 0 l
 
 let string_to_operator = function
     | "+" -> Some Add
@@ -19,21 +29,21 @@ let string_to_operator = function
     | "*" -> Some Mult
     | "/" -> Some Div
     | "^" -> Some Pow
-    | x when is_number x -> Some (Val (Int.of_string x))
+    | x when is_number x -> Some (Val (Float.of_string x))
     | _   -> None
 
 let eval_operation (s: stack) (op: operator): stack =
-    let helper (f: int -> int -> int) = function
+    let helper (f: float -> float -> float) = function
         | val1 :: val2 :: tl -> f val2 val1 :: tl
         | _ -> failwith "not enough values in stack"
     in let apply_fun f = helper f s in
     match op with
     | Val x -> x :: s
-    | Add   -> apply_fun ( + )
-    | Sub   -> apply_fun ( - )
-    | Mult  -> apply_fun ( * )
-    | Pow   -> apply_fun ( ** )
-    | Div   -> apply_fun ( / )
+    | Add   -> apply_fun ( +. )
+    | Sub   -> apply_fun ( -. )
+    | Mult  -> apply_fun ( *. )
+    | Pow   -> apply_fun ( **. )
+    | Div   -> apply_fun ( /. )
 
 let quick_eval (args: string list): unit =
     let f str =
@@ -44,7 +54,7 @@ let quick_eval (args: string list): unit =
     List.map ~f args
     |> List.fold ~f:eval_operation ~init:[]
     |> function
-        | result :: [] -> printf "%d\n" result
+        | result :: [] -> printf "%.10g\n" result
         | _ -> printf "Too many elements left in stack.\n"
 
 let help prog_name =
