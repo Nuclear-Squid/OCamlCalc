@@ -18,8 +18,7 @@ type operator =
 
 type operator_tree = {
     op: operator;
-    l_br: operator_tree option;
-    r_br: operator_tree option;
+    br: operator_tree list
 }
 
 let is_number str =
@@ -52,16 +51,11 @@ let debug_op_to_str = function
     | Pow -> "^"
 
 let debug_print_op_tree tree = 
-    let rec loop node depth =
+    let rec loop depth node =
         printf "%s%s\n" (String.make (depth * 2) ' ') (debug_op_to_str node.op);
-        match node.l_br with
-        | None   -> ();
-        | Some n -> loop n (depth + 1);
-        match node.r_br with
-        | None   -> ();
-        | Some n -> loop n (depth + 1);
+        List.iter ~f:(loop (depth + 1)) node.br
     in
-    loop tree 0
+    loop 0 tree
 
 let operator_priority = function
     | Val _ -> 0
@@ -106,7 +100,7 @@ let get_operator_depth_list input_string : (int * operator_tree) list =
         |> List.filter ~f:(fun (_, str) -> str <> "")
         |> List.map ~f:(fun (depth, str) -> (depth, string_to_operator_exn str))
         |> explicit_multiplications []
-        |> List.map ~f:(fun (depth, op) -> (depth, {op = op; l_br = None; r_br = None}))
+        |> List.map ~f:(fun (depth, op) -> (depth, {op = op; br = []}))
 
 let join_op_tree_nodes (input: (int * operator_tree) list) =
     let highest_op_prio = 
@@ -120,7 +114,7 @@ let join_op_tree_nodes (input: (int * operator_tree) list) =
                  (untreated: (int * operator_tree) list) = function
         | (_,v1) :: (od, op) :: (_,v2) :: [] as l -> begin
             if operator_priority op.op = cur_op_prio && od = cur_par_prio then
-                let new_op = { op = op.op; l_br = Some v1; r_br = Some v2; } in
+                let new_op = { op = op.op; br = [v1; v2] } in
                 let next_input = untreated @ [od, new_op] in
                 match cur_op_prio, cur_par_prio with
                 | 1, 0 -> new_op
@@ -134,7 +128,7 @@ let join_op_tree_nodes (input: (int * operator_tree) list) =
         end
         | (d1,v1) :: (od, op) :: (d2,v2) :: tl -> begin
             if operator_priority op.op = cur_op_prio && od = cur_par_prio then
-                let new_op = { op = op.op; l_br = Some v1; r_br = Some v2; }
+                let new_op = { op = op.op; br = [v1; v2] }
                 in loop cur_op_prio cur_par_prio untreated ((od, new_op) :: tl)
             else
                 let new_untreated = untreated @ [(d1, v1); (od, op)] in
