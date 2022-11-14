@@ -30,7 +30,7 @@ let is_number str =
         | (_, []) -> true
         | (_, _) -> false
     in match String.to_list str with
-    | [] -> false
+    | [] | ['.'] -> false
     | l  -> loop 0 l
 
 let string_to_operator = function
@@ -70,6 +70,16 @@ let get_operator_depth_list input_string : (int * operator_tree) list =
         | ')' :: tl -> get_str_depth_list (depth - 1) "" (acc @ [depth, buff]) tl
         | ' ' :: tl -> get_str_depth_list depth "" (acc @ [depth, buff]) tl
         | sym :: tl -> get_str_depth_list depth (buff ^ Char.to_string sym) acc tl
+    and add_spaces_around_operators (input: char list) =
+        let rec loop (acc: char list) = function
+            | [] -> List.rev acc
+            | hd :: tl -> match string_to_operator @@ Char.to_string hd with
+                | Some _ when not (Char.is_digit hd) -> loop (' ' :: hd :: ' ' :: acc) tl
+                | _ -> loop (hd :: acc) tl
+        in loop [] input
+            |> String.of_char_list
+            |> printf "%s\n";
+            loop [] input
     and string_to_operator_exn str =
         match string_to_operator str with
         | Some op -> op
@@ -80,6 +90,7 @@ let get_operator_depth_list input_string : (int * operator_tree) list =
                 (acc @ [(d1, Val v1); (min d1 d2, Mult); (d2, Val v2)]) tl
         | hd :: tl -> explicit_multiplications (acc @ [hd]) tl
     in String.to_list input_string
+        |> add_spaces_around_operators
         |> get_str_depth_list 0 "" []
         |> List.filter ~f:(fun (_, str) -> str <> "")
         |> List.map ~f:(fun (depth, str) -> (depth, string_to_operator_exn str))
