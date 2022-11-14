@@ -42,21 +42,6 @@ let string_to_operator = function
     | x when is_number x -> Some (Val (Float.of_string x))
     | _   -> None
 
-let debug_op_to_str = function
-    | Val x -> Float.to_string x
-    | Add -> "+"
-    | Sub -> "-"
-    | Mult -> "*"
-    | Div -> "/"
-    | Pow -> "^"
-
-let debug_print_op_tree tree = 
-    let rec loop depth node =
-        printf "%s%s\n" (String.make (depth * 2) ' ') (debug_op_to_str node.op);
-        List.iter ~f:(loop (depth + 1)) node.br
-    in
-    loop 0 tree
-
 let operator_priority = function
     | Val _ -> 0
     | Add | Sub -> 1
@@ -76,7 +61,6 @@ let eval_operation (s: stack) (op: operator): stack =
     | Pow   -> apply_fun ( **. )
     | Div   -> apply_fun ( /. )
 
-(* Dear god this got way out of hand *)
 let get_operator_depth_list input_string : (int * operator_tree) list =
     let rec get_str_depth_list depth (buff: string) (acc: (int * string) list) = function
         | [] when depth > 0 -> failwith "Unclosed parenthesese"
@@ -139,6 +123,10 @@ let join_op_tree_nodes (input: (int * operator_tree) list) =
     in
     loop highest_op_prio highest_par_prio [] input
 
+let rec eval_operation_tree tree = 
+    let open List in
+    hd_exn @@ eval_operation (rev tree.br >>| eval_operation_tree) tree.op
+
 let quick_eval (args: string list) (style: calculator_style): unit =
     match style with
     | ReversePolish -> begin 
@@ -157,7 +145,8 @@ let quick_eval (args: string list) (style: calculator_style): unit =
         String.concat ~sep:" " args
         |> get_operator_depth_list
         |> join_op_tree_nodes
-        |> debug_print_op_tree
+        |> eval_operation_tree
+        |> printf "%.10g\n"
     end
 
 let help prog_name =

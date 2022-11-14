@@ -19,8 +19,8 @@ style. I just wanted something that works before doing the hard parts.
 ## Objectives
 
 - [X] Quick evaluation reverse polish style
-- [ ] Quick evaluation standard style
-- [ ] A descriptive help message / docs
+- [X] Quick evaluation standard style
+- [ ] A descriptive help message / docs / cleaner error handeling
 - [ ] rudementary TUI interface
 - [ ] fancy functions (like `sin`, `ln`...)
 - [ ] custom function definition
