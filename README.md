@@ -20,7 +20,7 @@ style. I just wanted something that works before doing the hard parts.
 
 - [X] Quick evaluation reverse polish style
 - [X] Quick evaluation standard style
-- [ ] A descriptive help message / docs / cleaner error handeling
+- [X] A descriptive help message / docs / cleaner error handeling
 - [ ] rudementary TUI interface
 - [ ] fancy functions (like `sin`, `ln`...)
-- [ ] custom function definition
+- [ ] custom variable / function definition

@@ -2,9 +2,9 @@ open Base
 open Stdio
 open Poly
 
-type [@warning "-37"] calculator_style =
-    | Standard
-    | ReversePolish
+(* type calculator_style = *)
+(*     | Standard *)
+(*     | ReversePolish *)
 
 type stack = float list
 
@@ -42,6 +42,14 @@ let string_to_operator = function
     | x when is_number x -> Some (Val (Float.of_string x))
     | _   -> None
 
+let map_string_to_operator_res input : (operator list, string) Result.t = 
+    let rec loop (acc: operator list) = function
+        | [] -> Ok (List.rev acc)
+        | hd :: tl -> match string_to_operator hd with
+            | Some op -> loop (op :: acc) tl
+            | None -> Error (Printf.sprintf "Unkown operator `%s`" hd)
+    in loop [] input
+
 let operator_priority = function
     | Val _ -> 0
     | Add | Sub -> 1
@@ -61,11 +69,11 @@ let eval_operation (s: stack) (op: operator): stack =
     | Pow   -> apply_fun ( **. )
     | Div   -> apply_fun ( /. )
 
-let get_operator_depth_list input_string : (int * operator_tree) list =
+let get_operator_depth_list input_string : ((int * operator_tree) list, string) Result.t =
     let rec get_str_depth_list depth (buff: string) (acc: (int * string) list) = function
-        | [] when depth > 0 -> failwith "Unclosed parenthesese"
-        | ')' :: _ when depth = 0 -> failwith "')' is missing a matching '('"
-        | []        -> acc @ [depth, buff]
+        | [] when depth > 0 -> Error "Unclosed parenthesese"
+        | ')' :: _ when depth = 0 -> Error "')' is missing a matching '('"
+        | []        -> Ok (acc @ [depth, buff])
         | '(' :: tl -> get_str_depth_list (depth + 1) "" (acc @ [depth, buff]) tl
         | ')' :: tl -> get_str_depth_list (depth - 1) "" (acc @ [depth, buff]) tl
         | ' ' :: tl -> get_str_depth_list depth "" (acc @ [depth, buff]) tl
@@ -74,28 +82,25 @@ let get_operator_depth_list input_string : (int * operator_tree) list =
         let rec loop (acc: char list) = function
             | [] -> List.rev acc
             | hd :: tl -> match string_to_operator @@ Char.to_string hd with
-                | Some _ when not (Char.is_digit hd) -> loop (' ' :: hd :: ' ' :: acc) tl
-                | _ -> loop (hd :: acc) tl
+                | None | Some (Val _) -> loop (hd :: acc) tl
+                | _ -> loop (' ' :: hd :: ' ' :: acc) tl
         in loop [] input
-            |> String.of_char_list
-            |> printf "%s\n";
-            loop [] input
-    and string_to_operator_exn str =
-        match string_to_operator str with
-        | Some op -> op
-        | None    -> eprintf "Unkown operator `%s`\n" str; Caml.exit 1 
     and explicit_multiplications acc = function
         | [] -> acc
         | (d1, Val v1) :: (d2, Val v2) :: tl when d1 <> d2 -> explicit_multiplications
                 (acc @ [(d1, Val v1); (min d1 d2, Mult); (d2, Val v2)]) tl
         | hd :: tl -> explicit_multiplications (acc @ [hd]) tl
+    in let open Result
     in String.to_list input_string
         |> add_spaces_around_operators
         |> get_str_depth_list 0 "" []
-        |> List.filter ~f:(fun (_, str) -> str <> "")
-        |> List.map ~f:(fun (depth, str) -> (depth, string_to_operator_exn str))
-        |> explicit_multiplications []
-        |> List.map ~f:(fun (depth, op) -> (depth, {op = op; br = []}))
+        >>| List.filter ~f:(fun (_, str) -> str <> "")
+        >>= (fun l -> 
+            let dl, sl = List.unzip l in
+            map_string_to_operator_res sl
+            >>| List.zip_exn dl)
+        >>| explicit_multiplications []
+        >>| List.map ~f:(fun (depth, op) -> (depth, {op = op; br = []}))
 
 let join_op_tree_nodes (input: (int * operator_tree) list) =
     let highest_op_prio = 
@@ -117,7 +122,7 @@ let join_op_tree_nodes (input: (int * operator_tree) list) =
                 | _, _ -> loop (cur_op_prio - 1) cur_par_prio [] next_input
             else
                 match cur_op_prio, cur_par_prio with
-                | 1, 0 -> failwith "sssssrrrttt"
+                | 1, 0 -> failwith "Ayo what the fuck"
                 | 1, _ -> loop highest_op_prio (cur_par_prio - 1) [] (untreated @ l)
                 | _, _ -> loop (cur_op_prio - 1) cur_par_prio [] (untreated @ l)
         end
@@ -130,7 +135,7 @@ let join_op_tree_nodes (input: (int * operator_tree) list) =
                 loop cur_op_prio cur_par_prio new_untreated ((d2, v2) :: tl)
         end
         | [_, op] -> op
-        | _ -> failwith "syntax error in expression"
+        | _ -> failwith "How the fuck did that get past security checks ?"
     in
     loop highest_op_prio highest_par_prio [] input
 
@@ -138,38 +143,53 @@ let rec eval_operation_tree tree =
     let open List in
     hd_exn @@ eval_operation (rev tree.br >>| eval_operation_tree) tree.op
 
-let quick_eval (args: string list) (style: calculator_style): unit =
-    match style with
-    | ReversePolish -> begin 
-        let f str =
-            match string_to_operator str with
-            | Some op -> op
-            | None -> eprintf "Unkown operator `%s`\n" str; Caml.exit 1
-        in
-        List.map ~f args
-        |> List.fold ~f:eval_operation ~init:[]
-        |> function
-            | result :: [] -> printf "%.10g\n" result
-            | _ -> printf "Too many elements left in stack.\n"
-    end
-    | Standard -> begin
+let quick_eval (args: string list) : unit =
+    let quick_eval_rev_pol (args: string list): (stack, string) Result.t =
+        let open Result in
+        map_string_to_operator_res args
+        >>| List.fold ~f:eval_operation ~init:[]
+    and quick_eval_standard (args: string list): (float, string) Result.t =
+        let open Result in
         String.concat ~sep:" " args
         |> get_operator_depth_list
-        |> join_op_tree_nodes
-        |> eval_operation_tree
-        |> printf "%.10g\n"
+        >>| join_op_tree_nodes
+        >>| eval_operation_tree
+    in
+    match quick_eval_rev_pol args with
+    | Ok [] -> failwith "This really shouldn't have happend, what"
+    | Ok (result :: tl) -> begin
+        printf "%.10g\n" result;
+        match tl with
+        | [] -> ()
+        | _  -> begin
+            printf "\nThere are still some elements left in the stack :\n";
+            List.iter ~f:(printf "%.10g") tl
+        end
+    end
+    | Error pol_error -> begin
+        match quick_eval_standard args with
+        | Ok result -> printf "%.10g\n" result
+        | Error standard_error -> begin
+            printf "None of the evaluation methods could compute a result.\n";
+            printf "The error message (per parser) were :\n";
+            printf "|> reverse polish : %s" pol_error;
+            printf "|> standard style : %s" standard_error
+        end
     end
 
 let help prog_name =
     printf "-< %s >-\n\n" prog_name;
-    printf "Not specifying any args will give you an interactive mode.\n";
-    printf "Use `%s` followed by an expression to quickly evaluate it :\n" prog_name;
-    printf "note : evaluations follow the 'inverted polish' mothod\n\n";
-    printf "|> example : `%s 12 51 + 2 /` will return 31\n" prog_name
+    printf "Not specifying any args will give you an interactive mode. (comming soon)\n";
+    printf "Use `%s` followed by an expression to quickly evaluate it :\n\n" prog_name;
+    printf "note : you can use either the standard method, or the 'reverse polish'\n";
+    printf "method, no need to specify an argument, the program knows which one to use\n\n";
+    printf "## examples :\n";
+    printf "|> `%s 12 51 + 2 /` will return 31\n" prog_name;
+    printf "|> `%s 5.4(2^6)/10` will return 34.56\n" prog_name
 
 let () =
     let [@warning "-8"] prog_name :: args = Array.to_list @@ Sys.get_argv () in
     match args with
     | [] -> failwith "interactive mode incomming"
-    | "-h" :: _  | "--help" :: [] -> help prog_name
-    | _  -> quick_eval args Standard
+    | "-h" :: _  | "--help" :: _ -> help prog_name
+    | _  -> quick_eval args
