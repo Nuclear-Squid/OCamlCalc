@@ -2,10 +2,6 @@ open Base
 open Stdio
 open Poly
 
-(* type calculator_style = *)
-(*     | Standard *)
-(*     | ReversePolish *)
-
 type stack = float list
 
 type operator =
@@ -56,20 +52,20 @@ let operator_priority = function
     | Mult | Div -> 2
     | Pow -> 3
 
-let eval_operation (s: stack) (op: operator): stack =
+let eval_operation (s: stack) (op: operator): stack option =
     let helper (f: float -> float -> float) = function
-        | val1 :: val2 :: tl -> f val2 val1 :: tl
-        | _ -> failwith "not enough values in stack"
+        | val1 :: val2 :: tl -> Some (f val2 val1 :: tl)
+        | _ -> None
     in let apply_fun f = helper f s in
     match op with
-    | Val x -> x :: s
+    | Val x -> Some (x :: s)
     | Add   -> apply_fun ( +. )
     | Sub   -> apply_fun ( -. )
     | Mult  -> apply_fun ( *. )
     | Pow   -> apply_fun ( **. )
     | Div   -> apply_fun ( /. )
 
-let get_operator_depth_list input_string : ((int * operator_tree) list, string) Result.t =
+let get_operator_depth_list input_string : ((int * operator) list, string) Result.t =
     let rec get_str_depth_list depth (buff: string) (acc: (int * string) list) = function
         | [] when depth > 0 -> Error "Unclosed parenthesese"
         | ')' :: _ when depth = 0 -> Error "')' is missing a matching '('"
@@ -90,6 +86,18 @@ let get_operator_depth_list input_string : ((int * operator_tree) list, string) 
         | (d1, Val v1) :: (d2, Val v2) :: tl when d1 <> d2 -> explicit_multiplications
                 (acc @ [(d1, Val v1); (min d1 d2, Mult); (d2, Val v2)]) tl
         | hd :: tl -> explicit_multiplications (acc @ [hd]) tl
+    and validate_operators input : bool =
+        let is_val = function
+            |  Val _ -> true
+            | _ -> false
+        in let rec loop last_op = function
+            | [] when is_val last_op -> true
+            | [] -> false
+            | hd :: _ when is_val hd = is_val last_op -> false
+            | hd :: tl -> loop hd tl
+        in match input with
+        | [] -> false
+        | hd :: tl -> loop hd tl
     in let open Result
     in String.to_list input_string
         |> add_spaces_around_operators
@@ -98,9 +106,11 @@ let get_operator_depth_list input_string : ((int * operator_tree) list, string) 
         >>= (fun l -> 
             let dl, sl = List.unzip l in
             map_string_to_operator_res sl
-            >>| List.zip_exn dl)
+            >>= function
+                | s when validate_operators s -> Ok (List.zip_exn dl s)
+                | _ -> Error "Syntax error"
+            )
         >>| explicit_multiplications []
-        >>| List.map ~f:(fun (depth, op) -> (depth, {op = op; br = []}))
 
 let join_op_tree_nodes (input: (int * operator_tree) list) =
     let highest_op_prio = 
@@ -135,23 +145,32 @@ let join_op_tree_nodes (input: (int * operator_tree) list) =
                 loop cur_op_prio cur_par_prio new_untreated ((d2, v2) :: tl)
         end
         | [_, op] -> op
-        | _ -> failwith "How the fuck did that get past security checks ?"
+        | _ -> failwith "How the fuck did that get past security checks ?"
     in
     loop highest_op_prio highest_par_prio [] input
 
 let rec eval_operation_tree tree = 
     let open List in
-    hd_exn @@ eval_operation (rev tree.br >>| eval_operation_tree) tree.op
+    hd_exn @@ Option.value_exn @@ eval_operation (rev tree.br >>| eval_operation_tree) tree.op
 
 let quick_eval (args: string list) : unit =
     let quick_eval_rev_pol (args: string list): (stack, string) Result.t =
         let open Result in
+        let f s_opt op = match s_opt with
+            | None -> None
+            | Some s -> eval_operation s op
+        in
         map_string_to_operator_res args
-        >>| List.fold ~f:eval_operation ~init:[]
+        >>| List.fold ~f ~init:(Some [])
+        |> function
+            | Error err -> Error err
+            | Ok None -> Error "Not enough elements in stack"
+            | Ok (Some s) -> Ok s
     and quick_eval_standard (args: string list): (float, string) Result.t =
         let open Result in
         String.concat ~sep:" " args
         |> get_operator_depth_list
+        >>| List.map ~f:(fun (depth, op) -> (depth, {op = op; br = []}))
         >>| join_op_tree_nodes
         >>| eval_operation_tree
     in
@@ -172,8 +191,8 @@ let quick_eval (args: string list) : unit =
         | Error standard_error -> begin
             printf "None of the evaluation methods could compute a result.\n";
             printf "The error message (per parser) were :\n";
-            printf "|> reverse polish : %s" pol_error;
-            printf "|> standard style : %s" standard_error
+            printf "|> reverse polish : %s\n" pol_error;
+            printf "|> standard style : %s\n" standard_error
         end
     end
 
