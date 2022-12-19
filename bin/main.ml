@@ -153,48 +153,43 @@ let rec eval_operation_tree tree =
     let open List in
     hd_exn @@ Option.value_exn @@ eval_operation (rev tree.br >>| eval_operation_tree) tree.op
 
-let quick_eval (args: string list) : unit =
-    let quick_eval_rev_pol (args: string list): (stack, string) Result.t =
+let quick_eval (args: string) : unit =
+    let quick_eval_rev_pol (args: string): (float, string) Result.t =
         let open Result in
         let f s_opt op = match s_opt with
             | None -> None
             | Some s -> eval_operation s op
         in
-        map_string_to_operator_res args
+        String.split ~on:' ' args
+        |> map_string_to_operator_res
         >>| List.fold ~f ~init:(Some [])
         |> function
             | Error err -> Error err
-            | Ok None -> Error "Not enough elements in stack"
-            | Ok (Some s) -> Ok s
-    and quick_eval_standard (args: string list): (float, string) Result.t =
+            | Ok (Some [v]) -> Ok v
+            | _ -> Error "invalid stack"
+    and quick_eval_standard (args: string): (float, string) Result.t =
         let open Result in
-        String.concat ~sep:" " args
-        |> get_operator_depth_list
+        get_operator_depth_list args
         >>| List.map ~f:(fun (depth, op) -> (depth, {op = op; br = []}))
         >>| join_op_tree_nodes
         >>| eval_operation_tree
     in
-    match quick_eval_rev_pol args with
-    | Ok [] -> failwith "This really shouldn't have happend, what"
-    | Ok (result :: tl) -> begin
-        printf "%.10g\n" result;
-        match tl with
-        | [] -> ()
-        | _  -> begin
-            printf "\nThere are still some elements left in the stack :\n";
-            List.iter ~f:(printf "%.10g") tl
+    let parsers: (string * (string -> (float, string) Result.t)) list = [
+        "Inverse Polish", quick_eval_rev_pol;
+        "Standard style", quick_eval_standard;
+    ] in
+    let rec loop parser_list args (acc: string list): (float, string list) Result.t =
+        match parser_list with
+        | [] -> Error acc
+        | (name, parser) :: tl -> begin
+            match parser args with
+            | Ok value -> Ok value
+            | Error e -> loop tl args ((name ^ " : " ^ e) :: acc)
         end
-    end
-    | Error pol_error -> begin
-        match quick_eval_standard args with
-        | Ok result -> printf "%.10g\n" result
-        | Error standard_error -> begin
-            printf "None of the evaluation methods could compute a result.\n";
-            printf "The error message (per parser) were :\n";
-            printf "|> reverse polish : %s\n" pol_error;
-            printf "|> standard style : %s\n" standard_error
-        end
-    end
+    in
+    match loop parsers args [] with
+    | Ok value -> printf "%.10g\n" value
+    | Error error_list -> List.iter ~f:(printf "%s\n") error_list
 
 let help prog_name =
     printf "-< %s >-\n\n" prog_name;
@@ -211,4 +206,4 @@ let () =
     match args with
     | [] -> failwith "interactive mode incomming"
     | "-h" :: _  | "--help" :: _ -> help prog_name
-    | _  -> quick_eval args
+    | _  -> quick_eval @@ String.concat ~sep:" " args
